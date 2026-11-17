@@ -51,6 +51,44 @@ class ReleaseInput(Strict):
     name: str
     month: str
     expected_fingerprint: str
+    scheme: str | None = None
+    scheme_version: int | None = None
+
+
+class CategoryInput(Strict):
+    category: str
+    name: str
+
+
+class SchemeInput(Strict):
+    scheme: str
+    note: str = ""
+    categories: list[CategoryInput]
+    expected_version: int | None = None
+
+
+class SchemeWithdrawInput(Strict):
+    basis: str
+
+
+class MappingInput(Strict):
+    material_id: str
+    category: str
+    valid_from: str
+    valid_to: str | None = None
+    basis: str
+    expected_revision: int | None = None
+
+
+class RevisionInput(Strict):
+    basis: str
+    expected_revision: int | None = None
+
+
+class DecisionInput(Strict):
+    category: str
+    basis: str
+    expected_revision: int | None = None
 
 
 class RateInput(Strict):
@@ -139,8 +177,8 @@ def create_app(db_path: str | Path | None = None):
         return service.lineage.row(month, street_id, material_id)
 
     @app.get("/batches/{batch_id}")
-    def batch(batch_id: str):
-        return service.batch_status(batch_id)
+    def batch(batch_id: str, scheme: str | None = None, scheme_version: int | None = None):
+        return service.batch_status(batch_id, scheme, scheme_version)
 
     @app.get("/batches/{batch_id}/quality")
     def batch_quality(batch_id: str):
@@ -155,8 +193,60 @@ def create_app(db_path: str | Path | None = None):
         return service.month_status(month)
 
     @app.get("/months/{month}/mart")
-    def month_mart(month: str):
-        return service.month_report(month)
+    def month_mart(month: str, scheme: str | None = None, scheme_version: int | None = None):
+        return service.month_report(month, scheme, scheme_version)
+
+    @app.get("/streets/{street_id}/mart")
+    def street_mart(street_id: str, start_month: str, end_month: str,
+                    scheme: str | None = None, scheme_version: int | None = None):
+        return service.street_report(street_id, start_month, end_month, scheme, scheme_version)
+
+    @app.post("/classifications")
+    def create_scheme(body: SchemeInput):
+        categories = [item.model_dump() for item in body.categories]
+        return service.classification.create_version(body.scheme, categories, body.note,
+                                                     body.expected_version)
+
+    @app.get("/classifications/{scheme}")
+    def scheme_versions(scheme: str):
+        return service.classification.versions(scheme)
+
+    @app.post("/classifications/{scheme}/{version}/withdraw")
+    def withdraw_scheme(scheme: str, version: int, body: SchemeWithdrawInput):
+        return service.classification.withdraw_version(scheme, version, body.basis)
+
+    @app.get("/classifications/{scheme}/{version}/mappings")
+    def mappings(scheme: str, version: int):
+        return service.classification.mappings(scheme, version)
+
+    @app.put("/classifications/{scheme}/{version}/mappings")
+    def put_mapping(scheme: str, version: int, body: MappingInput):
+        return service.classification.put_mapping(scheme, version, body.material_id,
+                                                  body.category, body.valid_from, body.basis,
+                                                  body.valid_to, body.expected_revision)
+
+    @app.post("/classifications/{scheme}/{version}/mappings/{rule_id}/withdraw")
+    def withdraw_mapping(scheme: str, version: int, rule_id: int, body: RevisionInput):
+        return service.classification.withdraw_mapping(scheme, version, rule_id, body.basis,
+                                                       body.expected_revision)
+
+    @app.get("/classifications/{scheme}/{version}/decisions")
+    def decisions(scheme: str, version: int):
+        return service.classification.decisions(scheme, version)
+
+    @app.put("/classifications/{scheme}/{version}/decisions/{fact_id}")
+    def put_decision(scheme: str, version: int, fact_id: int, body: DecisionInput):
+        return service.classification.put_decision(scheme, version, fact_id, body.category,
+                                                   body.basis, body.expected_revision)
+
+    @app.post("/classifications/{scheme}/{version}/decisions/{fact_id}/withdraw")
+    def withdraw_decision(scheme: str, version: int, fact_id: int, body: RevisionInput):
+        return service.classification.withdraw_decision(scheme, version, fact_id, body.basis,
+                                                        body.expected_revision)
+
+    @app.get("/facts/{fact_id}/classification")
+    def fact_classification(fact_id: int, scheme: str, scheme_version: int):
+        return service.fact_classification(fact_id, scheme, scheme_version)
 
     @app.get("/months/{month}/inventory")
     def inventory(month: str):
@@ -175,12 +265,13 @@ def create_app(db_path: str | Path | None = None):
         return service.query.source_month(source_id, month)
 
     @app.get("/months/{month}/preview")
-    def preview(month: str):
-        return service.preview(month)
+    def preview(month: str, scheme: str | None = None, scheme_version: int | None = None):
+        return service.preview(month, scheme, scheme_version)
 
     @app.post("/releases")
     def release(body: ReleaseInput):
-        return service.publish(body.name, body.month, body.expected_fingerprint)
+        return service.publish(body.name, body.month, body.expected_fingerprint,
+                               body.scheme, body.scheme_version)
 
     @app.get("/releases/{release_id}")
     def get_release(release_id: int):
@@ -201,6 +292,16 @@ def create_app(db_path: str | Path | None = None):
     @app.get("/releases/{release_id}/lineage/{street_id}/{material_id}")
     def release_lineage(release_id: int, street_id: str, material_id: str):
         return service.lineage.release_row(release_id, street_id, material_id)
+
+    @app.get("/lineage/rows/{month}/{street_id}/category/{category}")
+    def category_row_lineage(month: str, street_id: str, category: str,
+                             scheme: str, scheme_version: int):
+        caliber = service.caliber(scheme, scheme_version)
+        return service.lineage.category_row(month, street_id, category, caliber)
+
+    @app.get("/releases/{release_id}/lineage/{street_id}/category/{category}")
+    def release_category_lineage(release_id: int, street_id: str, category: str):
+        return service.lineage.release_category_row(release_id, street_id, category)
 
     @app.get("/audits")
     def audits(since: int = 0, limit: int = 100):

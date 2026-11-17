@@ -54,6 +54,30 @@ CREATE TABLE IF NOT EXISTS rate_cards (
  UNIQUE(material_id,channel,version)
 );
 CREATE INDEX IF NOT EXISTS ix_rate_period ON rate_cards(material_id,channel,valid_from,valid_to);
+CREATE TABLE IF NOT EXISTS classification_schemes (
+ id INTEGER PRIMARY KEY, scheme TEXT NOT NULL, version INTEGER NOT NULL,
+ status TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(scheme,version)
+);
+CREATE TABLE IF NOT EXISTS classification_categories (
+ id INTEGER PRIMARY KEY, scheme TEXT NOT NULL, version INTEGER NOT NULL,
+ category TEXT NOT NULL, name TEXT NOT NULL,
+ UNIQUE(scheme,version,category)
+);
+CREATE TABLE IF NOT EXISTS classification_mappings (
+ id INTEGER PRIMARY KEY, rule_id INTEGER, scheme TEXT NOT NULL, version INTEGER NOT NULL,
+ material_id TEXT NOT NULL, category TEXT NOT NULL,
+ valid_from TEXT NOT NULL, valid_to TEXT, basis TEXT NOT NULL,
+ revision INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(scheme,version,material_id,category,valid_from,revision)
+);
+CREATE INDEX IF NOT EXISTS ix_class_map ON classification_mappings(scheme,version,material_id);
+CREATE TABLE IF NOT EXISTS classification_decisions (
+ id INTEGER PRIMARY KEY, scheme TEXT NOT NULL, version INTEGER NOT NULL,
+ fact_id INTEGER NOT NULL REFERENCES facts(id), category TEXT,
+ basis TEXT NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(scheme,version,fact_id,revision)
+);
 """
 
 

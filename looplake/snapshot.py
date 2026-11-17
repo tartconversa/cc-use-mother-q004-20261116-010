@@ -44,11 +44,19 @@ class SnapshotAudit:
             import json
             left_rows = json.loads(left["content"])["mart"]["rows"]
             right_rows = json.loads(right["content"])["mart"]["rows"]
-            before_keys = {(x["street_id"], x["material_id"]): x for x in left_rows}
-            after_keys = {(x["street_id"], x["material_id"]): x for x in right_rows}
+            def row_key(row):
+                return (row["street_id"],
+                        row.get("material_id") if "material_id" in row else row.get("category"))
+            before_keys = {row_key(x): x for x in left_rows}
+            after_keys = {row_key(x): x for x in right_rows}
             changed = sorted(key for key in set(before_keys) | set(after_keys)
                              if before_keys.get(key) != after_keys.get(key))
+            changed_keys = []
+            for key in changed:
+                source = after_keys.get(key) or before_keys.get(key)
+                entry = {"street_id": key[0]}
+                entry["material_id" if "material_id" in source else "category"] = key[1]
+                changed_keys.append(entry)
             changes.append({"from_release": before["id"], "to_release": after["id"],
-                            "changed_keys": [{"street_id": key[0], "material_id": key[1]}
-                                             for key in changed]})
+                            "changed_keys": changed_keys})
         return {"month": month, "changes": changes}

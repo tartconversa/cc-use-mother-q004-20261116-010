@@ -3,14 +3,16 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
+from .classification import Classification
 from .ledger import Ledger
 from .model import LakeError, key
 
 
 class Reconciliation:
-    def __init__(self, ledger: Ledger, settlement=None):
+    def __init__(self, ledger: Ledger, settlement=None, classification: Classification | None = None):
         self.ledger = ledger
         self.settlement = settlement
+        self.classification = classification
 
     @staticmethod
     def _sum(facts, event_type: str, field: str) -> Decimal:
@@ -20,7 +22,7 @@ class Reconciliation:
     def _ids(facts, event_type: str):
         return [row["id"] for row in facts if row["event_type"] == event_type]
 
-    def batch(self, batch_id: str, tolerance_kg: str = "0.5"):
+    def batch(self, batch_id: str, tolerance_kg: str = "0.5", caliber: dict | None = None):
         batch_id = key(batch_id, "batch_id")
         try:
             tolerance = Decimal(str(tolerance_kg))
@@ -61,16 +63,43 @@ class Reconciliation:
         settled = self.settlement.batch(facts) if self.settlement else None
         if settled:
             issues.extend(settled["issues"])
-        return {"batch_id": batch_id, "ready": not issues, "tolerance_kg": format(tolerance, "f"),
-                "deposit_kg": format(deposit, "f"), "weigh_in_kg": format(weighing_in, "f"),
-                "weigh_out_kg": format(weighing_out, "f"), "transfer_kg": format(transfer, "f"),
-                "payout_yuan": format(payout, "f"), "fact_ids": [fact["id"] for fact in facts],
-                "settlement": settled, "issues": issues}
+        result = {"batch_id": batch_id, "ready": not issues, "tolerance_kg": format(tolerance, "f"),
+                  "deposit_kg": format(deposit, "f"), "weigh_in_kg": format(weighing_in, "f"),
+                  "weigh_out_kg": format(weighing_out, "f"), "transfer_kg": format(transfer, "f"),
+                  "payout_yuan": format(payout, "f"), "fact_ids": [fact["id"] for fact in facts],
+                  "settlement": settled, "issues": issues}
+        if caliber is not None:
+            result["classification"] = self._classification(caliber, facts)
+        return result
 
-    def month(self, month: str, tolerance_kg: str = "0.5"):
+    def _classification(self, caliber: dict, facts):
+        if self.classification is None:
+            raise LakeError("classification_unavailable", "classification is not configured", 409)
+        snap = self.classification.snapshot(caliber["scheme"], caliber["version"])
+        resolutions = []
+        for fact in facts:
+            if fact["event_type"] not in {"deposit", "weigh_in", "weigh_out", "transfer"}:
+                continue
+            resolution = Classification.resolve(snap, fact["material_id"], fact["day"], fact["id"])
+            entry = {"fact_id": fact["id"], "event_type": fact["event_type"],
+                     "material_id": fact["material_id"], "status": resolution["status"]}
+            if resolution["status"] == "mapped":
+                entry["category"] = resolution["category"]
+            else:
+                entry["reason"] = resolution["reason"]
+            resolutions.append(entry)
+        categories = sorted({entry["category"] for entry in resolutions if "category" in entry})
+        pending = [entry["fact_id"] for entry in resolutions if entry["status"] != "mapped"]
+        return {"caliber": {"mode": "scheme", "scheme": snap["scheme"],
+                            "scheme_version": snap["version"], "scheme_status": snap["status"]},
+                "resolutions": resolutions, "categories": categories,
+                "pending_fact_ids": pending,
+                "consistent": not pending and len(categories) <= 1}
+
+    def month(self, month: str, tolerance_kg: str = "0.5", caliber: dict | None = None):
         rows = self.ledger.period(month)
         batch_ids = sorted({row["batch_id"] for row in rows})
-        results = [self.batch(batch_id, tolerance_kg) for batch_id in batch_ids]
+        results = [self.batch(batch_id, tolerance_kg, caliber) for batch_id in batch_ids]
         return {"month": month, "ready": bool(results) and all(r["ready"] for r in results),
                 "batches": results, "unresolved_batches": [r["batch_id"] for r in results if not r["ready"]]}
 

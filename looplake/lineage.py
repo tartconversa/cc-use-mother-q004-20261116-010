@@ -34,12 +34,40 @@ class Lineage:
     def release_row(self, release_id: int, street_id: str, material_id: str):
         release = self.releases.get(release_id)
         rows = [row for row in release["content"]["mart"]["rows"]
-                if row["street_id"] == street_id and row["material_id"] == material_id]
+                if row["street_id"] == street_id and row.get("material_id") == material_id]
         if not rows:
             from .model import LakeError
             raise LakeError("unknown_release_row", "release row not found", 404)
         return {"release_id": release_id, "fingerprint": release["fingerprint"],
                 "row": rows[0], "frozen_reconciliation": release["content"]["reconciliation"]}
+
+    def category_row(self, month: str, street_id: str, category: str, caliber: dict):
+        report = self.mart.month(month, caliber=caliber)
+        rows = [row for row in report["rows"] if row["street_id"] == street_id
+                and row.get("category") == category]
+        if not rows:
+            from .model import LakeError
+            raise LakeError("unknown_mart_row", "mart row not found", 404)
+        row = rows[0]
+        traces = [self.ledger.trace(fact_id) for fact_id in row["fact_ids"]]
+        batch_ids = sorted({trace["fact"]["batch_id"] for trace in traces})
+        return {"row": row, "traces": traces, "mapping_refs": row["mapping_refs"],
+                "pending": [item for item in report.get("pending", [])
+                            if item["street_id"] == street_id],
+                "reconciliations": [self.reconciliation.batch(batch_id) for batch_id in batch_ids]}
+
+    def release_category_row(self, release_id: int, street_id: str, category: str):
+        release = self.releases.get(release_id)
+        rows = [row for row in release["content"]["mart"]["rows"]
+                if row["street_id"] == street_id and row.get("category") == category]
+        if not rows:
+            from .model import LakeError
+            raise LakeError("unknown_release_row", "release row not found", 404)
+        return {"release_id": release_id, "fingerprint": release["fingerprint"],
+                "caliber": release["content"].get("caliber"),
+                "row": rows[0], "mapping_refs": rows[0].get("mapping_refs", []),
+                "frozen_pending": release["content"]["mart"].get("pending", []),
+                "frozen_reconciliation": release["content"]["reconciliation"]}
 
     def audit_subject(self, subject: str):
         with self.store.connect() as conn:
